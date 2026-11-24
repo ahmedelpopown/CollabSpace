@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-notifications",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Notifications\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Notifications\\Tests\\": "tests/"
+        }
+    }
+}

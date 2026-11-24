@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-chat",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Chat\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Chat\\Tests\\": "tests/"
+        }
+    }
+}

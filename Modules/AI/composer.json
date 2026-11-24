@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-ai",
+    "autoload": {
+        "psr-4": {
+            "Modules\\AI\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\AI\\Tests\\": "tests/"
+        }
+    }
+}

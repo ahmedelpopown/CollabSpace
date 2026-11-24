@@ -1,0 +1,14 @@
+{
+    "Identity": true,
+    "AccessControl": true,
+    "Teams": true,
+    "Projects": true,
+    "Tasks": true,
+    "Files": true,
+    "Chat": true,
+    "Meetings": true,
+    "Notifications": true,
+    "AI": true,
+    "Reports": true,
+    "Audit": true
+}

@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-identity",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Identity\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Identity\\Tests\\": "tests/"
+        }
+    }
+}

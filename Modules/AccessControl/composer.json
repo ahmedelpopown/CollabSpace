@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-access-control",
+    "autoload": {
+        "psr-4": {
+            "Modules\\AccessControl\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\AccessControl\\Tests\\": "tests/"
+        }
+    }
+}

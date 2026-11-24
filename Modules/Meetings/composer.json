@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-meetings",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Meetings\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Meetings\\Tests\\": "tests/"
+        }
+    }
+}

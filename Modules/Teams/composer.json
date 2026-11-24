@@ -1,0 +1,13 @@
+{
+    "name": "collabspace/module-teams",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Teams\\": ["./", "app/"]
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Teams\\Tests\\": "tests/"
+        }
+    }
+}
