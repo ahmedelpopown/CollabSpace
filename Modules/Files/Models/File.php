@@ -17,11 +17,9 @@ class File extends Model
     use HasFactory;
     use SoftDeletes;
 
-    protected $fillable = [
-        'original_name',
-    ];
+    protected $fillable = ['original_name'];
 
-    protected $hidden = ['storage_disk', 'storage_path'];
+    protected $hidden = ['storage_disk', 'storage_path', 'checksum_sha256'];
 
     protected function casts(): array
     {
@@ -31,11 +29,10 @@ class File extends Model
     public function setOriginalNameAttribute(string $value): void
     {
         $safeName = basename(str_replace('\\', '/', trim($value)));
-        $safeName = preg_replace('/[\x00-\x1F\x7F]/', '', $safeName) ?? '';
+        $safeName = preg_replace('/[\\x00-\\x1F\\x7F]/', '', $safeName) ?? '';
 
         $this->attributes['original_name'] = substr($safeName, 0, 255);
     }
-
 
     protected static function newFactory(): \Illuminate\Database\Eloquent\Factories\Factory
     {
@@ -64,36 +61,5 @@ class File extends Model
     public function messageAttachments(): HasMany
     {
         return $this->hasMany(\Modules\Chat\Models\MessageAttachment::class);
-    }
-
-    public function canBeAccessedBy(User $user): bool
-    {
-        if (! $this->exists || $this->trashed()
-            || ! $user->exists || ! $user->is_active || $user->trashed()
-            || ! $user->can('files.view')) {
-            return false;
-        }
-
-        if ($user->hasRole('Administrator')) {
-            return true;
-        }
-
-        $activeProjectMembership = fn ($members) => $members
-            ->where('user_id', $user->getKey())
-            ->where('membership_status', 'active');
-
-        return $this->projects()->whereHas('memberships', $activeProjectMembership)->exists()
-            || $this->tasks()->whereHas('project.memberships', $activeProjectMembership)->exists()
-            || $this->messageAttachments()
-                ->whereHas('message.project.memberships', $activeProjectMembership)
-                ->exists();
-    }
-
-    public function canBeUploadedToBy(User $user, \Modules\Projects\Models\Project $project): bool
-    {
-        return $this->exists
-            && ! $this->trashed()
-            && $user->can('files.upload')
-            && $user->canAccessProject($project);
     }
 }

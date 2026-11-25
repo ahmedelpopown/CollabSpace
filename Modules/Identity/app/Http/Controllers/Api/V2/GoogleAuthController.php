@@ -17,9 +17,9 @@ class GoogleAuthController extends Controller
 
     public function redirect(): JsonResponse
     {
-        return response()->json([
+        return $this->noStore(response()->json([
             'auth_url' => $this->googleAuthService->getAuthorizationUrl(),
-        ]);
+        ]));
     }
 
     public function callback(Request $request): JsonResponse
@@ -32,7 +32,7 @@ class GoogleAuthController extends Controller
                 userAgent: $request->userAgent(),
             );
 
-            return response()->json([
+            return $this->noStore(response()->json([
                 'message' => 'Google authentication successful.',
                 'data' => [
                     'user' => AuthenticatedUserResource::make($session->user)->resolve($request),
@@ -40,11 +40,11 @@ class GoogleAuthController extends Controller
                     'token_type' => $session->tokenType,
                     'expires_at' => $session->expiresAt,
                 ],
-            ]);
+            ]));
         } catch (GoogleAuthException $exception) {
-            return response()->json([
+            return $this->noStore(response()->json([
                 'message' => $exception->getMessage(),
-            ], $exception->statusCode);
+            ], $exception->statusCode));
         }
     }
 }

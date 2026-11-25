@@ -94,35 +94,4 @@ class MeetingParticipant extends Pivot
 
         return false;
     }
-
-    public static function revokeUpcomingForTeamMember(int $teamId, int $userId): void
-    {
-        $meetingIds = Meeting::query()
-            ->where('status', 'scheduled')
-            ->where('starts_at', '>', now())
-            ->whereHas('project.teamAssignments', fn ($query) => $query->where('team_id', $teamId))
-            ->select('id');
-
-        DB::table('meeting_participants')
-            ->whereIn('meeting_id', $meetingIds)
-            ->where('user_id', $userId)
-            ->where('eligible_team_id', $teamId)
-            ->whereNull('access_revoked_at')
-            ->update(['access_revoked_at' => now()]);
-    }
-
-    public static function revokeUpcomingForProjectTeam(int $projectId, int $teamId): void
-    {
-        $meetingIds = Meeting::query()
-            ->where('project_id', $projectId)
-            ->where('status', 'scheduled')
-            ->where('starts_at', '>', now())
-            ->select('id');
-
-        DB::table('meeting_participants')
-            ->whereIn('meeting_id', $meetingIds)
-            ->where('eligible_team_id', $teamId)
-            ->whereNull('access_revoked_at')
-            ->update(['access_revoked_at' => now()]);
-    }
 }

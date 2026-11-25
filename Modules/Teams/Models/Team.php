@@ -8,8 +8,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Facades\DB;
-use Modules\Audit\Models\AuditLog;
 use Modules\Identity\Models\User;
 use Modules\Meetings\Models\MeetingParticipant;
 use Modules\Projects\Models\Project;
@@ -53,7 +51,9 @@ class Team extends Model
 
     public function activeMembers(): BelongsToMany
     {
-        return $this->members()->wherePivot('membership_status', 'active')->where('users.is_active', true);
+        return $this->members()
+            ->wherePivot('membership_status', TeamMember::STATUS_ACTIVE)
+            ->where('users.is_active', true);
     }
 
     public function projectAssignments(): HasMany
@@ -76,48 +76,5 @@ class Team extends Model
     public function meetingParticipants(): HasMany
     {
         return $this->hasMany(MeetingParticipant::class, 'eligible_team_id');
-    }
-
-    public function addMember(User $user, User $addedBy, string $teamRole = 'member'): TeamMember
-    {
-        if (! $this->exists || ! $this->is_active || $this->trashed()
-            || ! $user->exists || ! $user->is_active || $user->trashed()) {
-            throw new \DomainException('Only active teams and users may form an active team membership.');
-        }
-
-        if (! in_array($teamRole, ['lead', 'member'], true)) {
-            throw new \InvalidArgumentException('Unsupported team role.');
-        }
-
-        if (! $addedBy->exists
-            || ! $addedBy->is_active
-            || $addedBy->trashed()
-            || ! $addedBy->hasRole('Administrator')
-            || ! $addedBy->can('teams.members.assign')) {
-            throw new \Illuminate\Auth\Access\AuthorizationException('Only an Administrator may manage team membership.');
-        }
-
-        return DB::transaction(function () use ($user, $addedBy, $teamRole) {
-            DB::table('team_members')->updateOrInsert(
-                ['team_id' => $this->getKey(), 'user_id' => $user->getKey()],
-                [
-                    'team_role' => $teamRole,
-                    'membership_status' => 'active',
-                    'added_by_user_id' => $addedBy->getKey(),
-                    'joined_at' => now(),
-                    'left_at' => null,
-                ],
-            );
-
-            AuditLog::create([
-                'actor_user_id' => $addedBy->getKey(),
-                'action' => 'team.member.assign',
-                'subject_type' => static::class,
-                'subject_id' => $this->getKey(),
-                'new_values' => ['user_id' => $user->getKey(), 'team_role' => $teamRole],
-            ]);
-
-            return $this->memberships()->where('user_id', $user->getKey())->firstOrFail();
-        });
     }
 }

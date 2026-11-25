@@ -11,3 +11,7 @@
 */
 
 require base_path('Modules/Identity/routes/api.php');
+require base_path('Modules/Projects/routes/api.php');
+require base_path('Modules/Tasks/routes/api.php');
+require base_path('Modules/Teams/routes/api.php');
+require base_path('Modules/Files/routes/api.php');

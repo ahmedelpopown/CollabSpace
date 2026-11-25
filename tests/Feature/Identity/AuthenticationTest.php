@@ -29,7 +29,9 @@ it('registers a new account as a team member and issues a sanctum token', functi
         ->assertJsonPath('data.user.email', 'member@example.com')
         ->assertJsonPath('data.user.roles.0', 'Team Member')
         ->assertJsonPath('data.token_type', 'Bearer')
-        ->assertJsonStructure(['data' => ['access_token', 'expires_at']]);
+        ->assertJsonStructure(['data' => ['access_token', 'expires_at']])
+        ->assertHeader('Cache-Control', 'no-store, private')
+        ->assertHeader('Pragma', 'no-cache');
 
     $user = User::query()->where('email', 'member@example.com')->firstOrFail();
 
@@ -62,7 +64,9 @@ it('authenticates a user with valid credentials and returns their roles and perm
         ->assertJsonPath('data.user.id', $user->id)
         ->assertJsonPath('data.user.roles.0', 'Team Member')
         ->assertJsonPath('data.token_type', 'Bearer')
-        ->assertJsonStructure(['data' => ['access_token', 'expires_at', 'user' => ['permissions']]]);
+        ->assertJsonStructure(['data' => ['access_token', 'expires_at', 'user' => ['permissions']]])
+        ->assertHeader('Cache-Control', 'no-store, private')
+        ->assertHeader('Pragma', 'no-cache');
 
     $this->assertDatabaseHas('authentication_logs', [
         'user_id' => $user->id,
@@ -96,7 +100,7 @@ it('does not allow inactive users to log in', function (): void {
     $this->postJson('/api/v1/auth/login', [
         'email' => 'inactive@example.com',
         'password' => 'StrongPass123!',
-    ])->assertForbidden();
+    ])->assertUnauthorized();
 });
 
 it('returns the authenticated user when a valid bearer token is provided', function (): void {

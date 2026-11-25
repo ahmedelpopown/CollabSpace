@@ -11,8 +11,6 @@ use Modules\Identity\Actions\IssueAccessTokenAction;
 use Modules\Identity\Actions\RecordAuthenticationLogAction;
 use Modules\Identity\Exceptions\GoogleAuthException;
 use Modules\Identity\Models\User;
-
-
 use Throwable;
 
 final class GoogleAuthService
@@ -24,75 +22,70 @@ final class GoogleAuthService
         private readonly RecordAuthenticationLogAction $recordAuthenticationLog,
     ) {}
 
-
-
-public function getAuthorizationUrl(): string
-{
-    /** @var AbstractProvider $driver */
-    $driver = Socialite::driver('google');
-
-    return $driver
-        ->stateless()
-        ->scopes(['openid', 'email', 'profile'])
-        ->redirect()
-        ->getTargetUrl();
-}
-
-public function authenticate(
-    string $deviceName,
-    ?string $ipAddress,
-    ?string $userAgent,
-    ?string $accessToken = null,
-): \Modules\Identity\DTOs\AuthenticatedSessionData {
-    $googleUser = $this->fetchGoogleUser($accessToken);
-    $profile = $this->extractVerifiedProfile($googleUser);
-    $user = $this->resolveUser($profile);
-
-    return DB::transaction(function () use (
-        $user,
-        $profile,
-        $deviceName,
-        $ipAddress,
-        $userAgent,
-    ): \Modules\Identity\DTOs\AuthenticatedSessionData {
-        $user->forceFill(['last_seen_at' => now()])->save();
-
-        $session = $this->issueAccessToken->execute(
-            user: $user,
-            rememberMe: false,
-            deviceName: $deviceName,
-        );
-
-        $this->recordAuthenticationLog->execute(
-            user: $user,
-            attemptedEmail: $profile['email'],
-            loginMethod: 'google',
-            wasSuccessful: true,
-            failureReason: null,
-            ipAddress: $ipAddress,
-            userAgent: $userAgent,
-        );
-
-        return $session;
-    });
-}
-
-
-private function fetchGoogleUser(?string $accessToken): SocialiteUser
-{
-    try {
+    public function getAuthorizationUrl(): string
+    {
         /** @var AbstractProvider $driver */
         $driver = Socialite::driver('google');
-        $provider = $driver->stateless();
 
-        return filled($accessToken)
-            ? $provider->userFromToken((string) $accessToken)
-            : $provider->user();
-    } catch (Throwable $exception) {
-        report($exception);
-        throw GoogleAuthException::providerFailed($exception);
+        return $driver
+            ->scopes(['openid', 'email', 'profile'])
+            ->redirect()
+            ->getTargetUrl();
     }
-}
+
+    public function authenticate(
+        string $deviceName,
+        ?string $ipAddress,
+        ?string $userAgent,
+    ): \Modules\Identity\DTOs\AuthenticatedSessionData {
+        $googleUser = $this->fetchGoogleUser();
+        $profile = $this->extractVerifiedProfile($googleUser);
+        $user = $this->resolveUser($profile);
+
+        return DB::transaction(function () use (
+            $user,
+            $profile,
+            $deviceName,
+            $ipAddress,
+            $userAgent,
+        ): \Modules\Identity\DTOs\AuthenticatedSessionData {
+            $user->forceFill(['last_seen_at' => now()])->save();
+
+            $session = $this->issueAccessToken->execute(
+                user: $user,
+                rememberMe: false,
+                deviceName: $deviceName,
+            );
+
+            $this->recordAuthenticationLog->execute(
+                user: $user,
+                attemptedEmail: $profile['email'],
+                loginMethod: 'google',
+                wasSuccessful: true,
+                failureReason: null,
+                ipAddress: $ipAddress,
+                userAgent: $userAgent,
+            );
+
+            return $session;
+        });
+    }
+
+    private function fetchGoogleUser(): SocialiteUser
+    {
+        try {
+            /** @var AbstractProvider $driver */
+            $driver = Socialite::driver('google');
+
+            // Google routes use Laravel's web middleware, allowing Socialite to
+            // validate its session-backed OAuth state and prevent login CSRF.
+            return $driver->user();
+        } catch (Throwable $exception) {
+            report($exception);
+
+            throw GoogleAuthException::providerFailed($exception);
+        }
+    }
 
     /**
      * @return array{

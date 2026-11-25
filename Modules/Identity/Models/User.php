@@ -102,7 +102,7 @@ class User extends Authenticatable
 
     public function activeTeams(): BelongsToMany
     {
-        return $this->teams()->wherePivot('membership_status', 'active')->where('teams.is_active', true);
+        return $this->teams()->wherePivot('membership_status', TeamMember::STATUS_ACTIVE)->where('teams.is_active', true);
     }
 
     public function projectMemberships(): HasMany
@@ -119,7 +119,7 @@ class User extends Authenticatable
 
     public function activeProjects(): BelongsToMany
     {
-        return $this->projects()->wherePivot('membership_status', 'active');
+        return $this->projects()->wherePivot('membership_status', ProjectMember::STATUS_ACTIVE);
     }
 
     public function taskAssignments(): HasMany
@@ -176,22 +176,9 @@ class User extends Authenticatable
     {
         return $this->is_active && ! $this->trashed() && $this->projectMemberships()
             ->where('project_id', $projectId)
-            ->where('membership_status', 'active')
+            ->active()
             ->exists();
     }
 
-    public function canAccessProject(Project $project): bool
-    {
-        if (! $this->exists
-            || ! $this->is_active
-            || $this->trashed()
-            || ! $project->exists
-            || $project->trashed()
-            || ! $this->can('projects.view')) {
-            return false;
-        }
 
-        return $this->hasRole('Administrator')
-            || $this->hasActiveProjectMembership((int) $project->getKey());
-    }
 }

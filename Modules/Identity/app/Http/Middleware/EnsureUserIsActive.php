@@ -2,6 +2,7 @@
 
 namespace Modules\Identity\Http\Middleware;
 
+use App\Http\Responses\ApiResponse;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -17,9 +18,10 @@ class EnsureUserIsActive
                 $user->tokens()->delete();
             }
 
-            return response()->json([
-                'message' => 'This account is inactive. Please contact an administrator.',
-            ], Response::HTTP_FORBIDDEN);
+            return ApiResponse::failure(
+                'This account is inactive. Please contact an administrator.',
+                Response::HTTP_FORBIDDEN,
+            );
         }
 
         return $next($request);

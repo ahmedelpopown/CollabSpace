@@ -26,10 +26,10 @@ class AuthController extends Controller
             $request->userAgent(),
         );
 
-        return response()->json([
+        return $this->noStore(response()->json([
             'message' => 'Account created successfully.',
             'data' => $this->authenticatedPayload($session, $request),
-        ], JsonResponse::HTTP_CREATED);
+        ], JsonResponse::HTTP_CREATED));
     }
 
     public function login(
@@ -45,10 +45,10 @@ class AuthController extends Controller
             userAgent: $request->userAgent(),
         );
 
-        return response()->json([
+        return $this->noStore(response()->json([
             'message' => 'Login successful.',
             'data' => $this->authenticatedPayload($session, $request),
-        ]);
+        ]));
     }
 
     public function me(Request $request): JsonResponse
@@ -80,6 +80,13 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'All sessions have been revoked.',
         ]);
+    }
+
+    private function noStore(JsonResponse $response): JsonResponse
+    {
+        return $response
+            ->header('Cache-Control', 'no-store, private')
+            ->header('Pragma', 'no-cache');
     }
 
     /**

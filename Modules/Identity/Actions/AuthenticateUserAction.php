@@ -2,7 +2,6 @@
 
 namespace Modules\Identity\Actions;
 
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -61,8 +60,8 @@ class AuthenticateUserAction
                 userAgent: $userAgent,
             );
 
-            throw new AuthorizationException(
-                'This account is inactive. Please contact an administrator.'
+            throw new AuthenticationException(
+                'The provided credentials are incorrect.'
             );
         }
 

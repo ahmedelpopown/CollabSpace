@@ -2,6 +2,7 @@
 
 namespace Modules\Meetings\Models;
 
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -77,7 +78,7 @@ class Meeting extends Model
             throw new \DomainException('Participants cannot be invited to an unavailable or cancelled meeting.');
         }
 
-        if (! $project->canBeManagedBy($invitedBy) || ! $invitedBy->can('meetings.invite')) {
+        if (! Gate::forUser($invitedBy)->allows('update', $project) || ! $invitedBy->can('meetings.invite')) {
             throw new AuthorizationException('The user cannot invite participants to this project meeting.');
         }
 
@@ -132,7 +133,7 @@ class Meeting extends Model
         }
 
         if ($user->hasRole('Administrator') || $user->hasRole('Project Manager')) {
-            return $user->canAccessProject($project);
+            return Gate::forUser($user)->allows('view', $project);
         }
 
         if (! $user->can('meetings.attend')) {

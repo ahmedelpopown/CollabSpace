@@ -20,6 +20,8 @@ class TaskFactory extends Factory
             'title' => fake()->sentence(5),
             'description' => fake()->paragraph(),
             'status' => 'pending',
+            'priority' => fake()->randomElement(Task::PRIORITIES),
+            'progress_percentage' => 0,
             'due_at' => now()->addDays(7),
         ];
     }

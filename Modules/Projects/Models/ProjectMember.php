@@ -2,12 +2,15 @@
 
 namespace Modules\Projects\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Modules\Identity\Models\User;
 
 class ProjectMember extends Pivot
 {
+    public const STATUS_ACTIVE = 'active';
+
     protected $table = 'project_members';
 
     public $incrementing = false;
@@ -18,6 +21,12 @@ class ProjectMember extends Pivot
         'project_id', 'user_id', 'membership_status', 'added_by_user_id',
         'invited_at', 'joined_at', 'removed_at',
     ];
+
+    /** Scope membership queries to currently active memberships. */
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('membership_status', self::STATUS_ACTIVE);
+    }
 
     protected function casts(): array
     {

@@ -2,6 +2,7 @@
 
 namespace Modules\Chat\Models;
 
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -94,12 +95,12 @@ class Message extends Model
             && ! $this->trashed()
             && $project !== null
             && $user->can('chat.read')
-            && $user->canAccessProject($project);
+            && Gate::forUser($user)->allows('view', $project);
     }
 
     public static function sendForProjectMember(User $sender, Project $project, string $body, ?self $parent = null): self
     {
-        if (! $sender->can('chat.send') || ! $sender->canAccessProject($project)) {
+        if (! $sender->can('chat.send') || ! Gate::forUser($sender)->allows('view', $project)) {
             throw new AuthorizationException('Active project membership is required to use project chat.');
         }
 
@@ -133,7 +134,7 @@ class Message extends Model
         if (! $this->exists || $this->trashed()
             || ! $project
             || ! $actor->can('chat.send')
-            || ! $actor->canAccessProject($project)) {
+            || ! Gate::forUser($actor)->allows('view', $project)) {
             throw new AuthorizationException('The user cannot add mentions to this project message.');
         }
 
@@ -141,7 +142,7 @@ class Message extends Model
             || ! $mentionedUser->is_active
             || $mentionedUser->trashed()
             || ! $mentionedUser->can('chat.read')
-            || ! $mentionedUser->canAccessProject($project)) {
+            || ! Gate::forUser($mentionedUser)->allows('view', $project)) {
             throw new \DomainException('Only active users with project chat access can be mentioned.');
         }
 
@@ -156,7 +157,7 @@ class Message extends Model
             || ! $project
             || ! $attachedBy->can('chat.send')
             || ! $attachedBy->can('files.upload')
-            || ! $attachedBy->canAccessProject($project)) {
+            || ! Gate::forUser($attachedBy)->allows('view', $project)) {
             throw new AuthorizationException('The user cannot attach files to this project message.');
         }
 
@@ -164,9 +165,7 @@ class Message extends Model
             throw new \DomainException('The file does not exist or is no longer available.');
         }
 
-        $isUploader = (int) $file->uploaded_by_user_id === (int) $attachedBy->getKey();
-
-        if (! $isUploader && ! $file->canBeAccessedBy($attachedBy)) {
+        if (! Gate::forUser($attachedBy)->allows('attachToChat', [$file, $project])) {
             throw new AuthorizationException('The user cannot share a file they cannot access.');
         }
 

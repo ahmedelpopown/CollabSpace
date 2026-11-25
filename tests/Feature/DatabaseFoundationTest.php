@@ -16,9 +16,20 @@ use Modules\Chat\Models\Message;
 use Modules\Files\Models\File;
 use Modules\Identity\Models\User;
 use Modules\Meetings\Models\Meeting;
+use Illuminate\Support\Facades\Gate;
+use Modules\Projects\Actions\AddProjectMemberAction;
+use Modules\Projects\Actions\AssignProjectTeamAction;
+use Modules\Projects\Actions\CreateProjectAction;
+use Modules\Projects\Actions\DetachProjectTeamAction;
+use Modules\Projects\Actions\RemoveProjectMemberAction;
+use Modules\Projects\Queries\EligibleProjectTeamMembersQuery;
 use Modules\Projects\Models\Project;
 use Modules\Tasks\Models\Task;
+use Modules\Tasks\Actions\AssignTaskAssigneesAction;
+use Modules\Tasks\Actions\UpdateAssignedTaskStatusAction;
 use Modules\Teams\Models\Team;
+use Modules\Teams\Actions\AddTeamMemberAction;
+use Modules\Teams\Actions\RemoveTeamMemberAction;
 use Modules\Teams\Models\TeamMember;
 use Modules\AccessControl\Seeders\AccessControlSeeder;
 use Spatie\Permission\Models\Role;
@@ -37,9 +48,9 @@ it('keeps team assignment separate from explicit project membership', function (
     $projectManager->assignRole('Project Manager');
     $team = Team::factory()->create();
     $teamUser = User::factory()->create();
-    $team->addMember($teamUser, $this->administrator);
+    app(AddTeamMemberAction::class)->execute($team, $teamUser, $this->administrator);
 
-    $project->assignTeam($team, $projectManager);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $projectManager);
 
     expect($project->teams()->whereKey($team->getKey())->exists())->toBeTrue()
         ->and($project->members()->whereKey($teamUser->getKey())->exists())->toBeFalse();
@@ -63,7 +74,7 @@ it('creates a project and its creator membership atomically', function () {
     $creator = User::factory()->create();
     $creator->assignRole('Project Manager');
 
-    $project = Project::createWithCreatorMembership($creator, ['name' => 'Created project']);
+    $project = app(CreateProjectAction::class)->execute($creator, ['name' => 'Created project']);
 
     expect($creator->hasActiveProjectMembership((int) $project->getKey()))->toBeTrue()
         ->and(AuditLog::query()->where('action', 'project.create')
@@ -77,8 +88,8 @@ it('denies project, task, and chat access to team members without explicit proje
     $task = Task::factory()->create(['project_id' => $project->getKey()]);
     $message = Message::factory()->create(['project_id' => $project->getKey()]);
 
-    expect($outsider->canAccessProject($project))->toBeFalse()
-        ->and($task->canBeAccessedBy($outsider))->toBeFalse()
+    expect(Gate::forUser($outsider)->allows('view', $project))->toBeFalse()
+        ->and(Gate::forUser($outsider)->allows('view', $task))->toBeFalse()
         ->and($message->canBeReadBy($outsider))->toBeFalse();
 
     expect(fn () => Message::sendForProjectMember($outsider, $project, 'Not allowed'))
@@ -91,14 +102,14 @@ it('allows an active project member to access project chat and their assigned ta
     $member->assignRole('Team Member');
     $projectManager = $project->creator;
     $projectManager->assignRole('Project Manager');
-    $project->addMember($member, $projectManager);
+    app(AddProjectMemberAction::class)->execute($project, $member, $projectManager);
 
     $task = Task::factory()->create(['project_id' => $project->getKey()]);
-    $task->assignAssignee($member, $projectManager);
+    app(AssignTaskAssigneesAction::class)->execute($task, [$member->getKey()], $projectManager);
     $message = Message::sendForProjectMember($member, $project, 'Project update');
 
-    expect($member->canAccessProject($project))->toBeTrue()
-        ->and($task->canBeAccessedBy($member))->toBeTrue()
+    expect(Gate::forUser($member)->allows('view', $project))->toBeTrue()
+        ->and(Gate::forUser($member)->allows('view', $task))->toBeTrue()
         ->and($message->canBeReadBy($member))->toBeTrue();
 });
 
@@ -108,18 +119,45 @@ it('limits project file metadata and uploads to users with active project access
     $projectManager->assignRole('Project Manager');
     $member = User::factory()->create();
     $member->assignRole('Team Member');
-    $project->addMember($member, $projectManager);
+    app(AddProjectMemberAction::class)->execute($project, $member, $projectManager);
     $outsider = User::factory()->create();
     $outsider->assignRole('Team Member');
     $file = File::factory()->create();
     $file->projects()->attach($project->getKey(), ['attached_at' => now()]);
 
-    expect($file->canBeAccessedBy($member))->toBeTrue()
-        ->and($file->canBeUploadedToBy($member, $project))->toBeTrue()
-        ->and($file->canBeAccessedBy($outsider))->toBeFalse()
-        ->and($file->canBeUploadedToBy($outsider, $project))->toBeFalse()
+    expect(Gate::forUser($member)->allows('view', $file))->toBeTrue()
+        ->and(Gate::forUser($member)->allows('uploadToProject', [File::class, $project]))->toBeTrue()
+        ->and(Gate::forUser($outsider)->allows('view', $file))->toBeFalse()
+        ->and(Gate::forUser($outsider)->allows('uploadToProject', [File::class, $project]))->toBeFalse()
         ->and($file->toArray())->not->toHaveKey('storage_path')
         ->and($file->toArray())->not->toHaveKey('storage_disk');
+});
+
+
+it('does not let an uploader attach a file after losing access to its project', function () {
+    $projectA = Project::factory()->create();
+    $managerA = $projectA->creator;
+    $managerA->assignRole('Project Manager');
+    $uploader = User::factory()->create();
+    $uploader->assignRole('Team Member');
+    app(AddProjectMemberAction::class)->execute($projectA, $uploader, $managerA);
+
+    $file = File::factory()->create();
+    $file->forceFill(['uploaded_by_user_id' => $uploader->getKey()])->save();
+    $file->projects()->attach($projectA->getKey(), ['attached_at' => now()]);
+    $projectA->memberships()->where('user_id', $uploader->getKey())->update([
+        'membership_status' => 'removed',
+        'removed_at' => now(),
+    ]);
+
+    $projectB = Project::factory()->create();
+    $managerB = $projectB->creator;
+    $managerB->assignRole('Project Manager');
+    app(AddProjectMemberAction::class)->execute($projectB, $uploader, $managerB);
+    $message = Message::sendForProjectMember($uploader, $projectB, 'Share attempt');
+
+    expect(fn () => $message->attachFile($file, $uploader))
+        ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class);
 });
 
 it('invites only active members of assigned teams without granting project access', function () {
@@ -129,19 +167,19 @@ it('invites only active members of assigned teams without granting project acces
     $invitee = User::factory()->create();
     $invitee->assignRole('Team Member');
     $team = Team::factory()->create();
-    $project->assignTeam($team, $projectManager);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $projectManager);
     $meeting = Meeting::factory()->create(['project_id' => $project->getKey()]);
 
     expect(fn () => $meeting->inviteEligibleMember($invitee, $projectManager))
         ->toThrow(DomainException::class);
 
-    $team->addMember($invitee, $this->administrator);
+    app(AddTeamMemberAction::class)->execute($team, $invitee, $this->administrator);
     $participant = $meeting->inviteEligibleMember($invitee, $projectManager);
 
     expect($participant->eligible_team_id)->toBe($team->getKey())
         ->and($invitee->hasActiveProjectMembership((int) $project->getKey()))->toBeFalse()
         ->and($meeting->canBeAccessedBy($invitee))->toBeTrue()
-        ->and($invitee->canAccessProject($project))->toBeFalse()
+        ->and(Gate::forUser($invitee)->allows('view', $project))->toBeFalse()
         ->and(fn () => Message::sendForProjectMember($invitee, $project, 'No chat access'))
         ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class);
 });
@@ -152,8 +190,8 @@ it('revokes future meeting access when qualifying team membership ends and prese
     $projectManager->assignRole('Project Manager');
     $member = User::factory()->create();
     $team = Team::factory()->create();
-    $team->addMember($member, $this->administrator);
-    $project->assignTeam($team, $projectManager);
+    app(AddTeamMemberAction::class)->execute($team, $member, $this->administrator);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $projectManager);
 
     $future = Meeting::factory()->create(['project_id' => $project->getKey()]);
     $past = Meeting::factory()->create([
@@ -165,7 +203,7 @@ it('revokes future meeting access when qualifying team membership ends and prese
     $pastParticipant = $past->inviteEligibleMember($member, $projectManager);
     $past->participants()->updateExistingPivot($member->getKey(), ['response_status' => 'attended']);
 
-    $team->memberships()->where('user_id', $member->getKey())->firstOrFail()->endMembership($this->administrator);
+    app(RemoveTeamMemberAction::class)->execute($team, $member, $this->administrator);
 
     $futureParticipant = $future->participantRecords()->firstOrFail();
     $pastParticipant = $past->participantRecords()->where('user_id', $member->getKey())->firstOrFail();
@@ -181,12 +219,12 @@ it('revokes future meeting access when a qualifying team is detached', function 
     $projectManager->assignRole('Project Manager');
     $member = User::factory()->create();
     $team = Team::factory()->create();
-    $team->addMember($member, $this->administrator);
-    $project->assignTeam($team, $projectManager);
+    app(AddTeamMemberAction::class)->execute($team, $member, $this->administrator);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $projectManager);
     $meeting = Meeting::factory()->create(['project_id' => $project->getKey()]);
     $participant = $meeting->inviteEligibleMember($member, $projectManager);
 
-    $project->detachTeam($team, $projectManager);
+    app(DetachProjectTeamAction::class)->execute($project, $team, $projectManager);
 
     $participant = $meeting->participantRecords()->where('user_id', $member->getKey())->firstOrFail();
 
@@ -200,11 +238,11 @@ it('limits project managers to projects with active project membership', functio
     $manager->assignRole('Project Manager');
     $assignedProject = Project::factory()->create();
     $unassignedProject = Project::factory()->create();
-    $assignedProject->addMember($manager, $this->administrator);
+    app(AddProjectMemberAction::class)->execute($assignedProject, $manager, $this->administrator);
 
-    expect($assignedProject->canBeManagedBy($manager))->toBeTrue()
-        ->and($unassignedProject->canBeManagedBy($manager))->toBeFalse()
-        ->and(fn () => $unassignedProject->addMember(User::factory()->create(), $manager))
+    expect(Gate::forUser($manager)->allows('update', $assignedProject))->toBeTrue()
+        ->and(Gate::forUser($manager)->allows('update', $unassignedProject))->toBeFalse()
+        ->and(fn () => app(AddProjectMemberAction::class)->execute($unassignedProject, User::factory()->create(), $manager))
         ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class);
 });
 
@@ -216,13 +254,15 @@ it('limits team members to their own assigned task status updates', function () 
     $otherMember->assignRole('Team Member');
     $projectManager = $project->creator;
     $projectManager->assignRole('Project Manager');
-    $project->addMember($assignee, $projectManager);
-    $project->addMember($otherMember, $projectManager);
+    app(AddProjectMemberAction::class)->execute($project, $assignee, $projectManager);
+    app(AddProjectMemberAction::class)->execute($project, $otherMember, $projectManager);
     $task = Task::factory()->create(['project_id' => $project->getKey()]);
-    $task->assignAssignee($assignee, $projectManager);
+    app(AssignTaskAssigneesAction::class)->execute($task, [$assignee->getKey()], $projectManager);
 
-    expect($task->updateStatusBy($assignee, 'in_progress'))->toBeTrue()
-        ->and($task->updateStatusBy($otherMember, 'completed'))->toBeFalse()
+    app(UpdateAssignedTaskStatusAction::class)->execute($task, $assignee, ['status' => 'in_progress']);
+
+    expect(fn () => app(UpdateAssignedTaskStatusAction::class)->execute($task, $otherMember, ['status' => 'completed']))
+        ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class)
         ->and($task->fresh()->status)->toBe('in_progress')
         ->and($otherMember->can('projects.create'))->toBeFalse()
         ->and($otherMember->can('teams.create'))->toBeFalse();
@@ -234,12 +274,12 @@ it('keeps project authorization checks side-effect free while requiring the view
     $project = Project::factory()->create();
     $initialAuditCount = AuditLog::query()->count();
 
-    expect($administrator->canAccessProject($project))->toBeTrue()
+    expect(Gate::forUser($administrator)->allows('view', $project))->toBeTrue()
         ->and(AuditLog::query()->count())->toBe($initialAuditCount);
 
     $administrator->revokePermissionTo('projects.view');
 
-    expect($administrator->canAccessProject($project))->toBeFalse();
+    expect(Gate::forUser($administrator)->allows('view', $project))->toBeFalse();
 });
 
 it('restricts AI settings and policy configuration to administrators and audits changes', function () {
@@ -270,9 +310,19 @@ it('derives project completion from non-deleted tasks and delayed state from dea
     Task::factory()->create(['project_id' => $project->getKey()]);
     $first->forceFill(['status' => 'completed'])->save();
 
-    expect($project->completionPercentage())->toBe(50.0)
-        ->and($project->isDelayed())->toBeTrue()
-        ->and(Project::factory()->create()->completionPercentage())->toBe(0.0);
+    $projectWithCounts = Project::query()
+        ->withCount([
+            'tasks',
+            'tasks as completed_tasks_count' => fn ($query) => $query->where('status', 'completed'),
+        ])
+        ->findOrFail($project->getKey());
+
+    $completion = $projectWithCounts->tasks_count > 0
+        ? round(($projectWithCounts->completed_tasks_count / $projectWithCounts->tasks_count) * 100, 2)
+        : 0.0;
+
+    expect($completion)->toBe(50.0)
+        ->and($project->isDelayed())->toBeTrue();
 });
 
 it('defaults AI to deny and constrains allowed AI queries to the users active projects', function () {
@@ -280,7 +330,7 @@ it('defaults AI to deny and constrains allowed AI queries to the users active pr
     $member = User::factory()->create();
     $member->assignRole('Team Member');
     $accessible = Project::factory()->create();
-    $accessible->addMember($member, $this->administrator);
+    app(AddProjectMemberAction::class)->execute($accessible, $member, $this->administrator);
     $private = Project::factory()->create();
     $access = app(AIResourceAccess::class);
 
@@ -328,14 +378,14 @@ it('limits AI tasks to the active member’s own assignments and excludes chat a
     $member = User::factory()->create();
     $member->assignRole('Team Member');
     $project = Project::factory()->create();
-    $project->addMember($member, $this->administrator);
+    app(AddProjectMemberAction::class)->execute($project, $member, $this->administrator);
     $projectManager = $project->creator;
     $projectManager->assignRole('Project Manager');
     $ownTask = Task::factory()->create(['project_id' => $project->getKey()]);
-    $ownTask->assignAssignee($member, $projectManager);
+    app(AssignTaskAssigneesAction::class)->execute($ownTask, [$member->getKey()], $projectManager);
     $otherTask = Task::factory()->create(['project_id' => $project->getKey()]);
     $otherTask->assignees()->detach();
-    $otherTask->assignAssignee($project->creator, $projectManager);
+    app(AssignTaskAssigneesAction::class)->execute($otherTask, [$project->creator->getKey()], $projectManager);
 
     $access = app(AIResourceAccess::class);
     $tasks = $access->queryFor($member, 'tasks', 'read')->get();
@@ -371,17 +421,17 @@ it('uses opaque Sanctum tokens and rejects revoked or expired tokens', function 
 it('requires an authorized administrator to end a team membership', function () {
     $team = Team::factory()->create();
     $member = User::factory()->create();
-    $team->addMember($member, $this->administrator);
+    app(AddTeamMemberAction::class)->execute($team, $member, $this->administrator);
     $membership = $team->memberships()->where('user_id', $member->getKey())->firstOrFail();
 
     $manager = User::factory()->create();
     $manager->assignRole('Project Manager');
 
-    expect(fn () => $membership->endMembership($manager))
+    expect(fn () => app(RemoveTeamMemberAction::class)->execute($team, $member, $manager))
         ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class)
         ->and($team->memberships()->where('user_id', $member->getKey())->firstOrFail()->membership_status)->toBe('active');
 
-    $membership->endMembership($this->administrator);
+    app(RemoveTeamMemberAction::class)->execute($team, $member, $this->administrator);
 
     expect($team->memberships()->where('user_id', $member->getKey())->firstOrFail()->membership_status)->toBe('inactive')
         ->and(AuditLog::query()->where('action', 'team.member.remove')->exists())->toBeTrue();
@@ -392,18 +442,18 @@ it('requires an authorized project manager to detach a team', function () {
     $manager = $project->creator;
     $manager->assignRole('Project Manager');
     $team = Team::factory()->create();
-    $project->assignTeam($team, $manager);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $manager);
 
     $outsider = User::factory()->create();
     $outsider->assignRole('Project Manager');
 
-    expect(fn () => $project->detachTeam($team, $outsider))
+    expect(fn () => app(DetachProjectTeamAction::class)->execute($project, $team, $outsider))
         ->toThrow(\Illuminate\Auth\Access\AuthorizationException::class)
-        ->and($project->teamIsAssigned((int) $team->getKey()))->toBeTrue();
+        ->and($project->teamAssignments()->where('team_id', $team->getKey())->exists())->toBeTrue();
 
-    $project->detachTeam($team, $manager);
+    app(DetachProjectTeamAction::class)->execute($project, $team, $manager);
 
-    expect($project->teamIsAssigned((int) $team->getKey()))->toBeFalse()
+    expect($project->teamAssignments()->where('team_id', $team->getKey())->exists())->toBeFalse()
         ->and(AuditLog::query()->where('action', 'project.team.detach')->exists())->toBeTrue();
 });
 
@@ -414,11 +464,11 @@ it('revokes project access when a member is explicitly removed and records the a
     $manager->assignRole('Project Manager');
     $member = User::factory()->create();
     $member->assignRole('Team Member');
-    $project->addMember($member, $manager);
+    app(AddProjectMemberAction::class)->execute($project, $member, $manager);
 
-    $project->removeMember($member, $manager);
+    app(RemoveProjectMemberAction::class)->execute($project, $member, $manager);
 
-    expect($member->fresh()->canAccessProject($project->fresh()))->toBeFalse()
+    expect(Gate::forUser($member->fresh())->allows('view', $project->fresh()))->toBeFalse()
         ->and($project->memberships()->where('user_id', $member->getKey())->value('membership_status'))->toBe('removed')
         ->and(AuditLog::query()->where('action', 'project.member.remove')->exists())->toBeTrue();
 });
@@ -428,12 +478,12 @@ it('does not include inactive or deleted users in team eligibility queries', fun
     $manager = $project->creator;
     $manager->assignRole('Project Manager');
     $team = Team::factory()->create();
-    $project->assignTeam($team, $manager);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $manager);
 
     $active = User::factory()->create();
     $inactive = User::factory()->create(['is_active' => false]);
     $deleted = User::factory()->create();
-    $team->addMember($active, $this->administrator);
+    app(AddTeamMemberAction::class)->execute($team, $active, $this->administrator);
 
     DB::table('team_members')->insert([
         ['team_id' => $team->getKey(), 'user_id' => $inactive->getKey(), 'team_role' => 'member', 'membership_status' => 'active', 'added_by_user_id' => $this->administrator->getKey(), 'joined_at' => now()],
@@ -441,7 +491,7 @@ it('does not include inactive or deleted users in team eligibility queries', fun
     ]);
     $deleted->delete();
 
-    expect($project->eligibleUsersFromTeam((int) $team->getKey())->pluck('users.id')->all())
+    expect(app(EligibleProjectTeamMembersQuery::class)->forProject($project, (int) $team->getKey())->pluck('id')->all())
         ->toBe([(int) $active->getKey()]);
 });
 
@@ -453,19 +503,19 @@ it('allows project members to access files shared through chat attachments only'
     $sender->assignRole('Team Member');
     $reader = User::factory()->create();
     $reader->assignRole('Team Member');
-    $project->addMember($sender, $manager);
-    $project->addMember($reader, $manager);
+    app(AddProjectMemberAction::class)->execute($project, $sender, $manager);
+    app(AddProjectMemberAction::class)->execute($project, $reader, $manager);
 
     $file = File::factory()->create();
     $file->forceFill(['uploaded_by_user_id' => $sender->getKey()])->save();
     $message = Message::sendForProjectMember($sender, $project, 'Shared attachment');
 
-    expect($file->canBeAccessedBy($sender))->toBeFalse();
+    expect(Gate::forUser($sender)->allows('view', $file))->toBeFalse();
 
     $message->attachFile($file, $sender);
 
-    expect($file->fresh()->canBeAccessedBy($sender))->toBeTrue()
-        ->and($file->fresh()->canBeAccessedBy($reader))->toBeTrue();
+    expect(Gate::forUser($sender)->allows('view', $file->fresh()))->toBeTrue()
+        ->and(Gate::forUser($reader)->allows('view', $file->fresh()))->toBeTrue();
 });
 
 it('protects file storage location and trusted metadata from mass assignment', function () {
@@ -497,7 +547,7 @@ it('does not allow a chat sender to attach a file they cannot access or own', fu
     $manager->assignRole('Project Manager');
     $sender = User::factory()->create();
     $sender->assignRole('Team Member');
-    $project->addMember($sender, $manager);
+    app(AddProjectMemberAction::class)->execute($project, $sender, $manager);
     $message = Message::sendForProjectMember($sender, $project, 'Attachment test');
     $outsider = User::factory()->create();
     $file = File::factory()->create();
@@ -515,8 +565,8 @@ it('denies meeting access after an invitee declines the invitation', function ()
     $team = Team::factory()->create();
     $invitee = User::factory()->create();
     $invitee->assignRole('Team Member');
-    $team->addMember($invitee, $this->administrator);
-    $project->assignTeam($team, $manager);
+    app(AddTeamMemberAction::class)->execute($team, $invitee, $this->administrator);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $manager);
     $meeting = Meeting::factory()->create(['project_id' => $project->getKey()]);
     $meeting->inviteEligibleMember($invitee, $manager);
     $meeting->participants()->updateExistingPivot($invitee->getKey(), ['response_status' => 'declined']);
@@ -531,8 +581,8 @@ it('rejects access to cancelled meetings for both managers and invitees', functi
     $team = Team::factory()->create();
     $invitee = User::factory()->create();
     $invitee->assignRole('Team Member');
-    $team->addMember($invitee, $this->administrator);
-    $project->assignTeam($team, $manager);
+    app(AddTeamMemberAction::class)->execute($team, $invitee, $this->administrator);
+    app(AssignProjectTeamAction::class)->execute($project, $team, $manager);
     $meeting = Meeting::factory()->create(['project_id' => $project->getKey()]);
     $meeting->inviteEligibleMember($invitee, $manager);
 
@@ -554,13 +604,13 @@ it('constrains project-bound AI conversations to that project and denies inacces
     $managerTwo->assignRole('Project Manager');
     $projectOne = Project::factory()->create(['created_by_user_id' => $managerOne->getKey()]);
     $projectTwo = Project::factory()->create(['created_by_user_id' => $managerTwo->getKey()]);
-    $projectOne->addMember($member, $managerOne);
-    $projectTwo->addMember($member, $managerTwo);
+    app(AddProjectMemberAction::class)->execute($projectOne, $member, $managerOne);
+    app(AddProjectMemberAction::class)->execute($projectTwo, $member, $managerTwo);
 
     $taskOne = Task::factory()->create(['project_id' => $projectOne->getKey()]);
     $taskTwo = Task::factory()->create(['project_id' => $projectTwo->getKey()]);
-    $taskOne->assignAssignee($member, $managerOne);
-    $taskTwo->assignAssignee($member, $managerTwo);
+    app(AssignTaskAssigneesAction::class)->execute($taskOne, [$member->getKey()], $managerOne);
+    app(AssignTaskAssigneesAction::class)->execute($taskTwo, [$member->getKey()], $managerTwo);
 
     $conversation = AIConversation::query()->create([
         'created_by_user_id' => $member->getKey(),

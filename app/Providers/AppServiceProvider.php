@@ -4,7 +4,16 @@ namespace App\Providers;
 
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Modules\Projects\Models\Project;
+use Modules\Projects\Policies\ProjectPolicy;
+use Modules\Tasks\Models\Task;
+use Modules\Tasks\Policies\TaskPolicy;
+use Modules\Teams\Models\Team;
+use Modules\Teams\Policies\TeamPolicy;
+use Modules\Files\Models\File;
+use Modules\Files\Policies\FilePolicy;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 
@@ -17,6 +26,11 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Gate::policy(Project::class, ProjectPolicy::class);
+        Gate::policy(Task::class, TaskPolicy::class);
+        Gate::policy(Team::class, TeamPolicy::class);
+        Gate::policy(File::class, FilePolicy::class);
+
         RateLimiter::for('auth-login', function (Request $request): array {
             $email = Str::lower(trim((string) $request->input('email')));
 

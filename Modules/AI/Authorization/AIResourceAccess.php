@@ -2,6 +2,7 @@
 
 namespace Modules\AI\Authorization;
 
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\AI\Models\AIActivityLog;
@@ -50,7 +51,7 @@ class AIResourceAccess
         } elseif ($conversation && (int) $conversation->created_by_user_id !== (int) $user->getKey()) {
             $denial = 'conversation_not_owned';
         } elseif ($conversation && $conversation->project_id !== null
-            && (! $conversation->project || ! $user->canAccessProject($conversation->project))) {
+            && (! $conversation->project || ! Gate::forUser($user)->allows('view', $conversation->project))) {
             $denial = 'conversation_project_not_accessible';
         } else {
             $roleIds = $user->roles()->pluck('roles.id');
@@ -133,21 +134,21 @@ class AIResourceAccess
         if ($scope === 'assigned_projects') {
             match ($resource) {
                 'projects' => $query->whereHas('memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active')),
+                    ->where('user_id', $user->getKey())->active()),
                 'tasks' => $query->whereHas('project.memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active')),
+                    ->where('user_id', $user->getKey())->active()),
                 'meetings' => $query->whereHas('project.memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active')),
+                    ->where('user_id', $user->getKey())->active()),
                 'reports' => $query->whereNotNull('project_id')
                     ->whereHas('project.memberships', fn (Builder $members) => $members
-                        ->where('user_id', $user->getKey())->where('membership_status', 'active')),
+                        ->where('user_id', $user->getKey())->active()),
                 'file_metadata' => $query->where(function (Builder $files) use ($user) {
                     $files->whereHas('projects.memberships', fn (Builder $members) => $members
-                        ->where('user_id', $user->getKey())->where('membership_status', 'active'))
+                        ->where('user_id', $user->getKey())->active())
                         ->orWhereHas('tasks.project.memberships', fn (Builder $members) => $members
-                            ->where('user_id', $user->getKey())->where('membership_status', 'active'))
+                            ->where('user_id', $user->getKey())->active())
                         ->orWhereHas('messageAttachments.message.project.memberships', fn (Builder $members) => $members
-                            ->where('user_id', $user->getKey())->where('membership_status', 'active'));
+                            ->where('user_id', $user->getKey())->active());
                 }),
                 default => null,
             };
@@ -160,10 +161,10 @@ class AIResourceAccess
 
             if ($user->hasRole('Project Manager')) {
                 $query->whereHas('projects.memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active'));
+                    ->where('user_id', $user->getKey())->active());
             } else {
                 $query->whereHas('memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active'));
+                    ->where('user_id', $user->getKey())->active());
             }
             return;
         }
@@ -171,7 +172,7 @@ class AIResourceAccess
         if ($scope === 'own' && $resource === 'tasks') {
             $query->whereHas('assignees', fn (Builder $assignees) => $assignees->whereKey($user->getKey()))
                 ->whereHas('project.memberships', fn (Builder $members) => $members
-                    ->where('user_id', $user->getKey())->where('membership_status', 'active'));
+                    ->where('user_id', $user->getKey())->active());
 
             return;
         }
